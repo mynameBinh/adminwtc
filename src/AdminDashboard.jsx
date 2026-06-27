@@ -173,7 +173,7 @@ export default function AdminDashboard({ token, onLogout }) {
             <img src={waterLogo} alt="Logo" className="admin-logo" />
             <div>
               <h1 className="admin-title">Admin Dashboard</h1>
-              <p className="admin-subtitle">Hệ thống giám sát &amp; Tương tác AI</p>
+              <p className="admin-subtitle">Giám sát &amp; Quản lý</p>
             </div>
           </div>
           <button className="admin-logout-btn" onClick={onLogout}>Đăng xuất</button>
@@ -196,7 +196,6 @@ export default function AdminDashboard({ token, onLogout }) {
               </div>
               {dateData && (
                 <div className="admin-date-summary">
-                  <h3>Thống kê ngày {selectedDate}</h3>
                   <div className="admin-stats-row">
                     <div className="admin-stat-box"><span className="stat-label">Tổng lượt Check-in</span><span className="stat-value">{dateData.total_checkins}</span></div>
                     <div className="admin-stat-box highlight"><span className="stat-label">Tổng lượng nước (ML)</span><span className="stat-value">{totalVolumeOnDate}</span></div>
@@ -206,7 +205,7 @@ export default function AdminDashboard({ token, onLogout }) {
                     <div className="admin-grid-cards">
                       {userLogsOnDate.map((item) => (
                         <div key={item.checkin_id} className="admin-card">
-                          <div className="admin-card-header"><span className="admin-card-user">👤 {item.username}</span><span className="admin-volume-tag">+{item.volume_ml}ml</span></div>
+                          <div className="admin-card-header"><span className="admin-card-user">@{item.username}</span><span className="admin-volume-tag">+{item.volume_ml}ml</span></div>
                           <div className="admin-card-time">🕒 Lúc: {item.time}</div>
                           <div className="admin-image-box">
                             {item.image_link_click_here !== "Không có ảnh" ? <a href={`${BACKEND_URL}${item.image_link_click_here}`} target="_blank" rel="noreferrer"><img src={`${BACKEND_URL}${item.image_link_click_here}`} alt="Check-in" loading="lazy" /></a> : <div className="admin-no-img">🚫 Không ảnh</div>}

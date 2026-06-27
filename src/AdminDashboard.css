@@ -6,7 +6,7 @@
 .admin-container {
   --c-bg: #F0F9FF;
   --c-surface: #FFFFFF;
-  --c-surface-2: #F8FAFC;
+  --c-surface-2: #f0f7ff;
   --c-border: #BAE6FD;
   --c-primary: #0EA5E9;
   --c-primary-soft: rgba(14, 165, 233, 0.10);
@@ -196,10 +196,12 @@
 }
 
 .stat-label {
-  font-size: 11.5px;
-  color: var(--c-text-p);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-text-p, #94a3b8);
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+
 }
 
 .stat-value {
@@ -214,34 +216,32 @@
 
 .admin-grid-cards {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3,minmax(140px, 1fr));
   gap: 12px;
 }
-
 .admin-card {
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
+  background: var(--c-bg, #0f172a);
+  border-radius: 12px;
   padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  border: 1px solid rgba(255,255,255,0.05);
+  transition: 0.1s ease-in;
 }
 
 .admin-card:hover {
   border-color: var(--c-primary);
   box-shadow: 0 4px 16px rgba(14, 165, 233, 0.10);
+  scale: calc(1.02);
 }
 
 .admin-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 4px;
 }
 
 .admin-card-user {
-  font-weight: 600;
+  font-weight: 900;
   color: var(--c-text-h);
   font-size: 14px;
   white-space: nowrap;
@@ -251,33 +251,40 @@
 }
 
 .admin-volume-tag {
-  background: var(--c-primary-soft);
-  color: var(--c-primary);
-  padding: 2px 8px;
-  border-radius: 20px;
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--c-success, #10b981);
   font-size: 12px;
   font-weight: 700;
-  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 6px;
 }
 
 .admin-card-time {
-  font-size: 12px;
-  color: var(--c-text-p);
+  font-size: 11px;
+  color: var(--c-text-p, #94a3b8);
+  margin-bottom: 10px;
 }
 
 .admin-image-box {
   width: 100%;
-  aspect-ratio: 1;
+  aspect-ratio: 3/4;
+  background: rgba(0, 0, 0, 0.3);
   border-radius: 8px;
   overflow: hidden;
-  background: #E2E8F0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .admin-image-box img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
+  transition: transform 0.2s;
+}
+
+.admin-image-box img:hover {
+  transform: scale(1.05);
 }
 
 .admin-no-img {
