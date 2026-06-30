@@ -1,22 +1,20 @@
 import React, { useState } from 'react';
-import AuthPage from './AuthPage';
+import AuthPage from './AuthPage.jsx';
 import AdminDashboard from './AdminDashboard';
-
-const TOKEN_KEY = 'admin_token';
 
 export default function App() {
   // Tự động kiểm tra token trong localStorage xem sếp đã đăng nhập trước đó chưa
-  const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || null);
+  const [token, setToken] = useState(localStorage.getItem('admin_token') || null);
 
   // Xử lý khi đăng nhập thành công từ AuthPage
   const handleLogin = (newToken) => {
-    localStorage.setItem(TOKEN_KEY, newToken);
+    localStorage.setItem('admin_token', newToken);
     setToken(newToken);
   };
 
   // Xử lý khi bấm Đăng xuất ở AdminDashboard
   const handleLogout = () => {
-    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem('admin_token');
     setToken(null);
   };
 
