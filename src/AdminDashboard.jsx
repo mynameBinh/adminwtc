@@ -7,6 +7,17 @@ const getLocalDateString = () => {
   return new Date(Date.now() - tzOffset).toISOString().split('T')[0];
 };
 
+// Đọc thông báo lỗi từ backend (FastAPI trả {detail: "..."}), có fallback kèm mã HTTP
+const readError = async (res, fallback) => {
+  try {
+    const d = await res.json();
+    if (typeof d?.detail === 'string') return d.detail;
+    if (typeof d?.detail?.message === 'string') return d.detail.message;
+    if (typeof d?.message === 'string') return d.message;
+  } catch (e) { /* phản hồi không phải JSON */ }
+  return `${fallback} (HTTP ${res.status})`;
+};
+
 /* ── Icon SVG (nét mảnh, đồng bộ) ── */
 const ICONS = {
   calendar: <><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></>,
@@ -116,6 +127,12 @@ export default function AdminDashboard({ token, onLogout }) {
   const [newTaskTarget, setNewTaskTarget] = useState(1);
   const [newTaskAssignee, setNewTaskAssignee] = useState('');
   const [isAddingTask, setIsAddingTask] = useState(false);
+  const [taskListError, setTaskListError] = useState('');
+  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState([]);
+  const [deletingTaskIds, setDeletingTaskIds] = useState([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isCleaningTasks, setIsCleaningTasks] = useState(false);
 
   const [lastSyncedUser, setLastSyncedUser] = useState('');
   const [showInteract, setShowInteract] = useState(false);
@@ -348,17 +365,29 @@ export default function AdminDashboard({ token, onLogout }) {
   // ── Mục tiêu check-in: API ──
   const authHeaders = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const fetchTasks = useCallback(() => {
-    fetch(`${BACKEND_URL}/api/admin/tasks`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then(res => {
+  // isBackground = true: tải ngầm (polling), không bật trạng thái "đang tải"
+  const fetchTasks = useCallback((isBackground = false) => {
+    if (!isBackground) setIsLoadingTasks(true);
+    return fetch(`${BACKEND_URL}/api/admin/tasks`, { headers: { 'Authorization': `Bearer ${token}` } })
+      .then(async res => {
         if (handleUnauthorized(res)) throw new Error('__unauthorized__');
+        if (!res.ok) throw new Error(await readError(res, 'Không tải được danh sách mục tiêu!'));
         return res.json();
       })
-      .then(data => { if (Array.isArray(data)) setTasks(data); })
+      .then(data => {
+        if (!Array.isArray(data)) throw new Error('Dữ liệu mục tiêu không hợp lệ!');
+        setTasks(data);
+        setTaskListError('');
+        // Bỏ chọn những mục không còn tồn tại trên server
+        setSelectedTaskIds(prev => prev.filter(id => data.some(x => x.id === id)));
+      })
       .catch(err => {
         if (err.message === '__unauthorized__') return;
         console.error('Lỗi tải mục tiêu:', err);
-      });
+        // Báo lỗi thay vì im lặng giữ danh sách cũ (nguyên nhân hiện "mục tiêu ma")
+        setTaskListError(err.message || 'Không tải được danh sách mục tiêu!');
+      })
+      .finally(() => { if (!isBackground) setIsLoadingTasks(false); });
   }, [token, handleUnauthorized]);
 
   const fetchTaskCheckins = useCallback((dateStr) => {
@@ -392,9 +421,9 @@ export default function AdminDashboard({ token, onLogout }) {
         assigned_to: newTaskAssignee || null,
       })
     })
-      .then(res => {
+      .then(async res => {
         if (handleUnauthorized(res)) throw new Error('__unauthorized__');
-        if (!res.ok) throw new Error('Không thể tạo mục tiêu!');
+        if (!res.ok) throw new Error(await readError(res, 'Không thể tạo mục tiêu!'));
         return res.json();
       })
       .then(() => {
@@ -410,21 +439,106 @@ export default function AdminDashboard({ token, onLogout }) {
   };
 
   const handleDeleteTask = (task) => {
-    if (!window.confirm(`Xóa mục tiêu "${task.title}"? Toàn bộ ảnh check-in của mục tiêu này cũng sẽ bị xóa.`)) return;
+    const n = task.checkin_count || 0;
+    const extra = n > 0 ? ` ${n} lượt check-in (kèm ảnh) của mục tiêu này cũng sẽ bị xóa.` : '';
+    if (!window.confirm(`Xóa mục tiêu "${task.title}"?${extra}`)) return;
+    setDeletingTaskIds(prev => [...prev, task.id]);
     fetch(`${BACKEND_URL}/api/admin/tasks/${task.id}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${token}` }
     })
-      .then(res => {
+      .then(async res => {
         if (handleUnauthorized(res)) throw new Error('__unauthorized__');
-        if (!res.ok) throw new Error('Xóa thất bại!');
-        fetchTasks();
+        // 404 = mục tiêu đã không còn trên server -> coi như đã xóa để dọn mục "ma" khỏi danh sách
+        if (!res.ok && res.status !== 404) throw new Error(await readError(res, 'Xóa thất bại!'));
+        setTasks(prev => prev.filter(x => x.id !== task.id));
+        setSelectedTaskIds(prev => prev.filter(id => id !== task.id));
+        fetchTasks(true);
         fetchTaskCheckins(selectedDate);
       })
       .catch(err => {
         if (err.message === '__unauthorized__') return;
         alert(`❌ Thất bại: ${err.message}`);
-      });
+        fetchTasks(true); // đồng bộ lại danh sách với server
+      })
+      .finally(() => setDeletingTaskIds(prev => prev.filter(id => id !== task.id)));
+  };
+
+  const toggleTaskSelect = (id) =>
+    setSelectedTaskIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  const allTasksSelected = tasks.length > 0 && selectedTaskIds.length === tasks.length;
+  const toggleSelectAllTasks = () => setSelectedTaskIds(allTasksSelected ? [] : tasks.map(x => x.id));
+
+  const handleBulkDeleteTasks = () => {
+    if (selectedTaskIds.length === 0) return;
+    const totalCheckins = tasks
+      .filter(x => selectedTaskIds.includes(x.id))
+      .reduce((sum, x) => sum + (x.checkin_count || 0), 0);
+    const extra = totalCheckins > 0 ? ` Cùng ${totalCheckins} lượt check-in (kèm ảnh) sẽ bị xóa.` : '';
+    if (!window.confirm(`Xóa ${selectedTaskIds.length} mục tiêu đã chọn?${extra}`)) return;
+    setIsBulkDeleting(true);
+    fetch(`${BACKEND_URL}/api/admin/tasks/bulk-delete`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ ids: selectedTaskIds })
+    })
+      .then(async res => {
+        if (handleUnauthorized(res)) throw new Error('__unauthorized__');
+        if (!res.ok) throw new Error(await readError(res, 'Xóa hàng loạt thất bại!'));
+        return res.json();
+      })
+      .then(data => {
+        alert(`✅ ${data.message || 'Đã xóa các mục tiêu đã chọn.'}`);
+        setSelectedTaskIds([]);
+        fetchTasks(true);
+        fetchTaskCheckins(selectedDate);
+      })
+      .catch(err => {
+        if (err.message === '__unauthorized__') return;
+        alert(`❌ Thất bại: ${err.message}`);
+        fetchTasks(true);
+      })
+      .finally(() => setIsBulkDeleting(false));
+  };
+
+  // Dọn mục tiêu "chỉ hôm nay" đã hết hạn, mục tiêu đã tắt và check-in mồ côi (xem trước rồi mới xóa)
+  const runTaskCleanup = (dryRun) =>
+    fetch(`${BACKEND_URL}/api/admin/tasks/cleanup`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ expired: true, inactive: true, orphan_checkins: true, dry_run: dryRun })
+    }).then(async res => {
+      if (handleUnauthorized(res)) throw new Error('__unauthorized__');
+      if (!res.ok) throw new Error(await readError(res, 'Dọn dẹp thất bại!'));
+      return res.json();
+    });
+
+  const handleCleanupTasks = () => {
+    setIsCleaningTasks(true);
+    runTaskCleanup(true)
+      .then(preview => {
+        if ((preview.tasks || 0) + (preview.orphan_checkins || 0) === 0) {
+          alert('✨ Không có mục tiêu hết hạn / đã tắt / check-in mồ côi nào cần dọn.');
+          return null;
+        }
+        const ok = window.confirm(
+          `Sẽ xóa ${preview.tasks || 0} mục tiêu (hết hạn hoặc đã tắt, kèm ${preview.task_checkins || 0} lượt check-in) ` +
+          `và ${preview.orphan_checkins || 0} check-in mồ côi. Tiếp tục?`
+        );
+        return ok ? runTaskCleanup(false) : null;
+      })
+      .then(done => {
+        if (!done) return;
+        alert(`✅ Đã dọn ${done.deleted_tasks || 0} mục tiêu và ${done.orphan_checkins || 0} check-in mồ côi.`);
+        setSelectedTaskIds([]);
+        fetchTasks(true);
+        fetchTaskCheckins(selectedDate);
+      })
+      .catch(err => {
+        if (err.message === '__unauthorized__') return;
+        alert(`❌ Thất bại: ${err.message}`);
+      })
+      .finally(() => setIsCleaningTasks(false));
   };
 
   useEffect(() => {
@@ -432,7 +546,7 @@ export default function AdminDashboard({ token, onLogout }) {
     fetchTasks();
     if (userList.length === 0) fetchAllUsers();
     fetchTaskCheckins(selectedDate);
-    const intervalTask = setInterval(() => fetchTaskCheckins(selectedDate), 10000);
+    const intervalTask = setInterval(() => { fetchTaskCheckins(selectedDate); fetchTasks(true); }, 10000);
     return () => clearInterval(intervalTask);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, selectedDate, fetchTasks, fetchTaskCheckins, fetchAllUsers]);
@@ -856,25 +970,95 @@ export default function AdminDashboard({ token, onLogout }) {
                   <h2 className="admin-section-title">Danh sách mục tiêu</h2>
                   <span className="count-pill">{tasks.length} mục tiêu</span>
                 </div>
-                {tasks.length === 0 ? (
-                  <div className="admin-empty-state">
-                    <Icon name="target" size={28} />
-                    <p>Chưa có mục tiêu nào.</p>
+
+                {taskListError && (
+                  <div
+                    role="alert"
+                    style={{
+                      display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+                      margin: '4px 0 12px', padding: '10px 12px', borderRadius: 10,
+                      background: 'rgba(220, 38, 38, 0.1)', color: '#b91c1c', fontSize: 14,
+                    }}
+                  >
+                    <span>⚠️ {taskListError}. Danh sách bên dưới có thể đã cũ.</span>
+                    <button type="button" className="updateBtn" onClick={() => fetchTasks(false)} disabled={isLoadingTasks}>
+                      Thử lại
+                    </button>
                   </div>
+                )}
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, margin: '4px 0 12px' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 14 }}>
+                    <input
+                      type="checkbox"
+                      checked={allTasksSelected}
+                      onChange={toggleSelectAllTasks}
+                      disabled={tasks.length === 0}
+                      style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    />
+                    Chọn tất cả
+                  </label>
+                  <button
+                    type="button"
+                    className="updateBtn danger"
+                    onClick={handleBulkDeleteTasks}
+                    disabled={selectedTaskIds.length === 0 || isBulkDeleting}
+                  >
+                    {isBulkDeleting ? 'Đang xóa...' : `Xóa đã chọn (${selectedTaskIds.length})`}
+                  </button>
+                  <button type="button" className="updateBtn" onClick={handleCleanupTasks} disabled={isCleaningTasks}>
+                    {isCleaningTasks ? 'Đang dọn...' : 'Dọn hết hạn / đã tắt'}
+                  </button>
+                  <button type="button" className="updateBtn" onClick={() => fetchTasks(false)} disabled={isLoadingTasks}>
+                    {isLoadingTasks ? 'Đang tải...' : 'Làm mới'}
+                  </button>
+                </div>
+
+                {tasks.length === 0 ? (
+                  isLoadingTasks ? (
+                    <Loading>Đang tải mục tiêu...</Loading>
+                  ) : (
+                    <div className="admin-empty-state">
+                      <Icon name="target" size={28} />
+                      <p>Chưa có mục tiêu nào.</p>
+                    </div>
+                  )
                 ) : (
                   <div className="list-stack">
                     {tasks.map((t) => (
-                      <div key={t.id} className="list-row task-row">
+                      <div
+                        key={t.id}
+                        className="list-row task-row"
+                        style={{ opacity: deletingTaskIds.includes(t.id) ? 0.5 : 1 }}
+                      >
                         <div className="list-row-main">
-                          <div className="task-title">{t.title}</div>
+                          <div className="task-title">
+                            <input
+                              type="checkbox"
+                              checked={selectedTaskIds.includes(t.id)}
+                              onChange={() => toggleTaskSelect(t.id)}
+                              aria-label={`Chọn mục tiêu ${t.title}`}
+                              style={{ width: 16, height: 16, marginRight: 8, verticalAlign: 'middle', cursor: 'pointer' }}
+                            />
+                            {t.title}
+                          </div>
                           <div className="task-meta">
                             <span className="pill">{t.target_per_day} lần/ngày</span>
                             <span className="pill">{t.assigned_to ? `@${t.assigned_to}` : 'Tất cả'}</span>
-                            {t.created_by && <span className="pill">Tự tạo</span>}
+                            {t.created_by && <span className="pill">Tự tạo bởi @{t.created_by}</span>}
+                            {t.is_expired && <span className="pill">Hết hạn</span>}
+                            {t.is_active === false && <span className="pill">Đã tắt</span>}
+                            {typeof t.checkin_count === 'number' && <span className="pill">{t.checkin_count} check-in</span>}
                           </div>
                           <div className="task-desc"><Icon name="camera" size={13} /> {t.verify_description}</div>
                         </div>
-                        <button type="button" onClick={() => handleDeleteTask(t)} className="updateBtn danger icon-only" aria-label="Xóa mục tiêu">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTask(t)}
+                          disabled={deletingTaskIds.includes(t.id)}
+                          className="updateBtn danger icon-only"
+                          aria-label="Xóa mục tiêu"
+                        >
                           <Icon name="trash" size={15} />
                         </button>
                       </div>
